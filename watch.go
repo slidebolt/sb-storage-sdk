@@ -11,9 +11,12 @@ import (
 
 // WatchHandlers defines callbacks for query membership changes.
 type WatchHandlers struct {
-	OnAdd    func(key string, data json.RawMessage)
-	OnRemove func(key string, data json.RawMessage)
-	OnUpdate func(key string, data json.RawMessage)
+	OnAdd              func(key string, data json.RawMessage)
+	OnRemove           func(key string, data json.RawMessage)
+	OnUpdate           func(key string, data json.RawMessage)
+	OnCapabilityUpdate func(key string, data json.RawMessage)
+	OnStateUpdate      func(key string, data json.RawMessage)
+	Fingerprint        func(json.RawMessage) string
 }
 
 // Watcher monitors state.changed events and fires callbacks when entities
@@ -21,6 +24,7 @@ type WatchHandlers struct {
 type Watcher struct {
 	mu       sync.Mutex
 	tracked  map[string]json.RawMessage
+	caps     map[string]string // key → capability fingerprint
 	handlers WatchHandlers
 	pattern  string
 	filters  []Filter
@@ -31,8 +35,13 @@ type Watcher struct {
 // query filters. Callbacks fire when an entity enters, leaves, or updates
 // within the result set. Call Stop() to unsubscribe.
 func Watch(msg messenger.Messenger, query Query, h WatchHandlers) (*Watcher, error) {
+	if h.Fingerprint == nil {
+		h.Fingerprint = capFingerprint
+	}
+
 	w := &Watcher{
 		tracked:  make(map[string]json.RawMessage),
+		caps:     make(map[string]string),
 		handlers: h,
 		pattern:  query.Pattern,
 		filters:  query.Where,
@@ -70,6 +79,16 @@ func (w *Watcher) Tracked() map[string]json.RawMessage {
 	return out
 }
 
+// Populate seeds the watcher with initial entity data. This is useful for
+// entities already in storage before the watch started, so that subsequent
+// updates can correctly differentiate between state and capability changes.
+func (w *Watcher) Populate(key string, data json.RawMessage) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.tracked[key] = data
+	w.caps[key] = w.handlers.Fingerprint(data)
+}
+
 func (w *Watcher) handle(m *messenger.Message) {
 	// Extract key from subject: state.changed.{key}
 	key := strings.TrimPrefix(m.Subject, "state.changed.")
@@ -83,23 +102,37 @@ func (w *Watcher) handle(m *messenger.Message) {
 
 	w.mu.Lock()
 	_, wasTracked := w.tracked[key]
+	prevCap := w.caps[key]
+	newCap := w.handlers.Fingerprint(m.Data)
 
 	switch {
 	case matches && !wasTracked:
 		w.tracked[key] = m.Data
+		w.caps[key] = newCap
 		w.mu.Unlock()
 		if w.handlers.OnAdd != nil {
 			w.handlers.OnAdd(key, m.Data)
 		}
 	case matches && wasTracked:
 		w.tracked[key] = m.Data
+		w.caps[key] = newCap
 		w.mu.Unlock()
 		if w.handlers.OnUpdate != nil {
 			w.handlers.OnUpdate(key, m.Data)
 		}
+		if prevCap != newCap {
+			if w.handlers.OnCapabilityUpdate != nil {
+				w.handlers.OnCapabilityUpdate(key, m.Data)
+			}
+		} else {
+			if w.handlers.OnStateUpdate != nil {
+				w.handlers.OnStateUpdate(key, m.Data)
+			}
+		}
 	case !matches && wasTracked:
 		prev := w.tracked[key]
 		delete(w.tracked, key)
+		delete(w.caps, key)
 		w.mu.Unlock()
 		if w.handlers.OnRemove != nil {
 			w.handlers.OnRemove(key, prev)
@@ -107,6 +140,18 @@ func (w *Watcher) handle(m *messenger.Message) {
 	default:
 		w.mu.Unlock()
 	}
+}
+
+// capFingerprint returns a hash of the "static" configuration fields of an entity
+// (everything except the state field).
+func capFingerprint(data json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return ""
+	}
+	delete(m, "state")
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 func matchesQuery(key string, doc map[string]any, pattern string, filters []Filter) bool {
