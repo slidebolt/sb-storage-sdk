@@ -2,7 +2,7 @@ module github.com/slidebolt/sb-storage-sdk
 
 go 1.26.1
 
-require github.com/slidebolt/sb-messenger-sdk v1.0.6
+require github.com/slidebolt/sb-messenger-sdk v1.0.7
 
 require (
 	github.com/antithesishq/antithesis-sdk-go v0.6.0-default-no-op // indirect
