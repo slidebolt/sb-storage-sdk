@@ -142,6 +142,9 @@ func (c *client) Save(v Keyed) error {
 	if err != nil {
 		return fmt.Errorf("storage: marshal: %w", err)
 	}
+	if len(data) == 0 || !json.Valid(data) {
+		return fmt.Errorf("storage: marshal: invalid or empty JSON payload")
+	}
 	req, _ := json.Marshal(saveRequest{Key: v.Key(), Data: json.RawMessage(data)})
 	return c.do("storage.save", req)
 }

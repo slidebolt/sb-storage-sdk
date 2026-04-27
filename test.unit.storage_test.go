@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,50 @@ func TestConnectSaveAndGet(t *testing.T) {
 	}
 	if string(got) != `{"name":"Device 1"}` {
 		t.Fatalf("get data: got %s", string(got))
+	}
+}
+
+func TestSaveRejectsMalformedJSONBeforeRequest(t *testing.T) {
+	msg, payload, err := messenger.MockWithPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer msg.Close()
+
+	client, err := Connect(map[string]json.RawMessage{"messenger": payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	err = client.Save(rawValue{key: "device.one", data: json.RawMessage(`{"type":"light"`)} )
+	if err == nil {
+		t.Fatal("expected malformed JSON payload to fail")
+	}
+	if !strings.Contains(err.Error(), "storage: marshal") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSaveRejectsZeroBytePayloadBeforeRequest(t *testing.T) {
+	msg, payload, err := messenger.MockWithPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer msg.Close()
+
+	client, err := Connect(map[string]json.RawMessage{"messenger": payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	err = client.Save(rawValue{key: "device.one", data: json.RawMessage(``)})
+	if err == nil {
+		t.Fatal("expected zero-byte payload to fail")
+	}
+	if !strings.Contains(err.Error(), "storage: marshal") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
