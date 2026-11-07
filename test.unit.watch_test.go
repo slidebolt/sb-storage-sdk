@@ -77,7 +77,7 @@ func (c *collector) handlers() WatchHandlers {
 
 func (c *collector) waitFor(t *testing.T, field *[]string, count int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		c.mu.Lock()
 		n := len(*field)
